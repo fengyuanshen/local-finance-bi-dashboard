@@ -198,6 +198,13 @@ h3 {
   border-color: var(--divider);
 }
 
+.top-income-band,
+.detail-band,
+.monthly-matrix-band {
+  background: var(--canvas);
+  border-color: var(--divider);
+}
+
 .data-band {
   animation-delay: 360ms;
   background: var(--dark-tile);
@@ -413,6 +420,7 @@ h3 {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(7, minmax(120px, 1fr));
+  margin-top: 12px;
 }
 
 label {
@@ -562,6 +570,28 @@ select:hover {
   width: 100%;
 }
 
+.chart-frame {
+  position: relative;
+}
+
+.chart-tooltip {
+  background: rgba(29, 29, 31, 0.92);
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 12px;
+  left: 0;
+  letter-spacing: -0.12px;
+  line-height: 1;
+  max-width: 220px;
+  padding: 8px 11px;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  transform: translate(-50%, calc(-100% - 10px));
+  white-space: nowrap;
+  z-index: 5;
+}
+
 .chart line {
   stroke: #d6d6d6;
 }
@@ -576,12 +606,23 @@ select:hover {
   font-size: 12px;
 }
 
+.axis-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.axis-line {
+  stroke: #d6d6d6;
+}
+
 .bar-income {
+  cursor: pointer;
   fill: var(--income);
   transition: opacity 180ms ease;
 }
 
 .bar-expense {
+  cursor: pointer;
   fill: var(--expense);
   transition: opacity 180ms ease;
 }
@@ -604,6 +645,7 @@ select:hover {
 }
 
 .net-dot {
+  cursor: pointer;
   fill: #ffffff;
   stroke: var(--primary);
   stroke-width: 3;
@@ -762,6 +804,35 @@ td select {
 
 .compact table {
   min-width: 720px;
+}
+
+.section-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.filter-presets {
+  margin-bottom: 4px;
+}
+
+.local-filters {
+  border-top: 1px solid var(--divider);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+  padding-top: 14px;
+}
+
+.wide-filter {
+  grid-column: span 2;
+}
+
+.muted-note {
+  color: var(--muted);
+  font-size: 14px;
 }
 
 .actions {

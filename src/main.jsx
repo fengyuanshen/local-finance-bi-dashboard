@@ -73,6 +73,19 @@ const initialState = {
   importHistory: [],
 };
 
+const defaultTopFilters = {
+  months: [],
+  monthToAdd: "",
+  minAmount: "",
+  maxAmount: "",
+  source: "全部",
+  category: "全部",
+  account: "全部",
+  cardType: "全部",
+  keyword: "",
+  sort: "amount",
+};
+
 function openDb() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -268,6 +281,13 @@ function formatCurrency(value) {
   return new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY", maximumFractionDigits: 0 }).format(value || 0);
 }
 
+function formatAxisCurrency(value) {
+  const abs = Math.abs(value || 0);
+  if (abs >= 10000) return `${value < 0 ? "-" : ""}${(abs / 10000).toFixed(abs >= 100000 ? 0 : 1)}万`;
+  if (abs >= 1000) return `${value < 0 ? "-" : ""}${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}千`;
+  return `${Math.round(value || 0)}`;
+}
+
 function csvEscape(value) {
   return `"${String(value ?? "").replace(/"/g, '""')}"`;
 }
@@ -314,13 +334,23 @@ function summarize(transactions) {
   return [...map.values()].sort((a, b) => a.month.localeCompare(b.month));
 }
 
-function aggregateInsight(transactions, key) {
-  const total = transactions.reduce((sum, tx) => sum + (tx.expense || 0), 0);
+function textOfTransaction(tx) {
+  return `${tx.summary || ""} ${tx.counterparty || ""} ${tx.account || ""} ${tx.category || ""} ${tx.source || ""}`.toLowerCase();
+}
+
+function transactionAmount(tx, kind) {
+  if (kind === "income") return tx.income || 0;
+  if (kind === "expense") return tx.expense || 0;
+  return Math.max(tx.income || 0, tx.expense || 0);
+}
+
+function aggregateInsight(transactions, key, kind = "expense") {
+  const total = transactions.reduce((sum, tx) => sum + transactionAmount(tx, kind), 0);
   const map = new Map();
   transactions.forEach((tx) => {
     const name = tx[key] || "未标记";
     const item = map.get(name) || { name, amount: 0, count: 0, share: 0 };
-    item.amount += tx.expense || 0;
+    item.amount += transactionAmount(tx, kind);
     item.count += 1;
     item.share = total ? item.amount / total : 0;
     map.set(name, item);
@@ -329,6 +359,9 @@ function aggregateInsight(transactions, key) {
 }
 
 function applyFilters(transactions, filters) {
+  const minAmount = parseMoney(filters.minAmount);
+  const maxAmount = parseMoney(filters.maxAmount);
+  const keyword = String(filters.keyword || "").trim().toLowerCase();
   return transactions.filter((tx) => {
     if (filters.start && tx.month < filters.start) return false;
     if (filters.end && tx.month > filters.end) return false;
@@ -337,6 +370,10 @@ function applyFilters(transactions, filters) {
     if (filters.cardType !== "全部" && tx.cardType !== filters.cardType) return false;
     if (filters.type !== "全部" && tx.type !== filters.type) return false;
     if (filters.category !== "全部" && tx.category !== filters.category) return false;
+    const amount = transactionAmount(tx, "any");
+    if (filters.minAmount !== "" && amount < minAmount) return false;
+    if (filters.maxAmount !== "" && amount > maxAmount) return false;
+    if (keyword && !textOfTransaction(tx).includes(keyword)) return false;
     return true;
   });
 }
@@ -345,80 +382,199 @@ function unique(items) {
   return ["全部", ...Array.from(new Set(items.filter(Boolean))).sort()];
 }
 
+function applyTopFilters(transactions, filters, kind) {
+  const selected = new Set(filters.months);
+  const minAmount = parseMoney(filters.minAmount);
+  const maxAmount = parseMoney(filters.maxAmount);
+  const keyword = String(filters.keyword || "").trim().toLowerCase();
+  return transactions.filter((tx) => {
+    const amount = transactionAmount(tx, kind);
+    if (amount <= 0) return false;
+    if (tx.type === "转账") return false;
+    if (kind === "expense" && tx.type === "退款") return false;
+    if (selected.size && !selected.has(tx.month)) return false;
+    if (filters.source !== "全部" && tx.source !== filters.source) return false;
+    if (filters.category !== "全部" && tx.category !== filters.category) return false;
+    if (filters.account !== "全部" && tx.account !== filters.account) return false;
+    if (filters.cardType !== "全部" && tx.cardType !== filters.cardType) return false;
+    if (filters.minAmount !== "" && amount < minAmount) return false;
+    if (filters.maxAmount !== "" && amount > maxAmount) return false;
+    if (keyword && !textOfTransaction(tx).includes(keyword)) return false;
+    return true;
+  });
+}
+
+function buildTopGroups(transactions, kind, topN, sort) {
+  const map = new Map();
+  transactions.forEach((tx) => {
+    const rows = map.get(tx.month) || [];
+    rows.push(tx);
+    map.set(tx.month, rows);
+  });
+  return [...map.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([month, rows]) => ({
+      month,
+      rows: rows
+        .sort((a, b) => {
+          if (sort === "date") return String(b.date).localeCompare(String(a.date));
+          return transactionAmount(b, kind) - transactionAmount(a, kind);
+        })
+        .slice(0, Math.max(1, Number(topN) || 10)),
+    }));
+}
+
 function MiniBarChart({ data }) {
+  const [tooltip, setTooltip] = useState(null);
   const width = 720;
   const height = 220;
-  const padding = 32;
+  const padding = { top: 18, right: 24, bottom: 32, left: 58 };
   const max = Math.max(1, ...data.flatMap((d) => [d.income, d.expense]));
-  const step = data.length ? (width - padding * 2) / data.length : 1;
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const step = data.length ? plotWidth / data.length : 1;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({ ratio, value: max * ratio }));
+  function showTooltip(event, label) {
+    const rect = event.currentTarget.ownerSVGElement.getBoundingClientRect();
+    setTooltip({
+      label,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+  }
   return (
-    <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="收入支出柱状图">
-      {[0.25, 0.5, 0.75].map((ratio) => (
-        <line
-          key={ratio}
-          x1={padding}
-          y1={height - padding - ratio * (height - padding * 2)}
-          x2={width - padding}
-          y2={height - padding - ratio * (height - padding * 2)}
-          className="grid-line"
-        />
-      ))}
-      <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} />
-      {data.map((d, i) => {
-        const x = padding + i * step + step * 0.18;
-        const incomeH = (d.income / max) * (height - padding * 2);
-        const expenseH = (d.expense / max) * (height - padding * 2);
-        return (
-          <g key={d.month}>
-            <rect x={x} y={height - padding - incomeH} width={Math.max(8, step * 0.22)} height={incomeH} rx="5" className="bar-income" />
-            <rect x={x + Math.max(12, step * 0.26)} y={height - padding - expenseH} width={Math.max(8, step * 0.22)} height={expenseH} rx="5" className="bar-expense" />
-            <text x={padding + i * step + step / 2} y={height - 8} textAnchor="middle">
-              {d.month.slice(5)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+    <div className="chart-frame">
+      <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="收入支出柱状图">
+        {ticks.map(({ ratio, value }) => {
+          const y = height - padding.bottom - ratio * plotHeight;
+          return (
+            <g key={ratio}>
+              <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} className={ratio === 0 ? "" : "grid-line"} />
+              <text x={padding.left - 10} y={y + 4} textAnchor="end" className="axis-label">
+                {formatAxisCurrency(value)}
+              </text>
+            </g>
+          );
+        })}
+        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} className="axis-line" />
+        {data.map((d, i) => {
+          const x = padding.left + i * step + step * 0.18;
+          const incomeH = (d.income / max) * plotHeight;
+          const expenseH = (d.expense / max) * plotHeight;
+          return (
+            <g key={d.month}>
+              <rect
+                x={x}
+                y={height - padding.bottom - incomeH}
+                width={Math.max(8, step * 0.22)}
+                height={incomeH}
+                rx="5"
+                className="bar-income"
+                onMouseEnter={(event) => showTooltip(event, `${d.month} 收入：${formatCurrency(d.income)}`)}
+                onMouseMove={(event) => showTooltip(event, `${d.month} 收入：${formatCurrency(d.income)}`)}
+                onMouseLeave={() => setTooltip(null)}
+              />
+              <rect
+                x={x + Math.max(12, step * 0.26)}
+                y={height - padding.bottom - expenseH}
+                width={Math.max(8, step * 0.22)}
+                height={expenseH}
+                rx="5"
+                className="bar-expense"
+                onMouseEnter={(event) => showTooltip(event, `${d.month} 支出：${formatCurrency(d.expense)}`)}
+                onMouseMove={(event) => showTooltip(event, `${d.month} 支出：${formatCurrency(d.expense)}`)}
+                onMouseLeave={() => setTooltip(null)}
+              />
+              <text x={padding.left + i * step + step / 2} y={height - 8} textAnchor="middle">
+                {d.month.slice(5)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      {tooltip && (
+        <div className="chart-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
+          {tooltip.label}
+        </div>
+      )}
+    </div>
   );
 }
 
 function LineChart({ data }) {
+  const [tooltip, setTooltip] = useState(null);
   const width = 720;
   const height = 180;
-  const padding = 32;
+  const padding = { top: 18, right: 24, bottom: 28, left: 58 };
   const values = data.map((d) => d.net);
   const min = Math.min(0, ...values);
   const max = Math.max(1, ...values);
   const span = max - min || 1;
-  const step = data.length > 1 ? (width - padding * 2) / (data.length - 1) : 0;
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const step = data.length > 1 ? plotWidth / (data.length - 1) : 0;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({ ratio, value: min + span * ratio }));
   const points = data
     .map((d, i) => {
-      const x = padding + i * step;
-      const y = height - padding - ((d.net - min) / span) * (height - padding * 2);
+      const x = padding.left + i * step;
+      const y = height - padding.bottom - ((d.net - min) / span) * plotHeight;
       return `${x},${y}`;
     })
     .join(" ");
-  const zeroY = height - padding - ((0 - min) / span) * (height - padding * 2);
+  const zeroY = height - padding.bottom - ((0 - min) / span) * plotHeight;
+  function showTooltip(event, label) {
+    const rect = event.currentTarget.ownerSVGElement.getBoundingClientRect();
+    setTooltip({
+      label,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+  }
   return (
-    <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="净结余趋势图">
-      {[0.25, 0.5, 0.75].map((ratio) => (
-        <line
-          key={ratio}
-          x1={padding}
-          y1={padding + ratio * (height - padding * 2)}
-          x2={width - padding}
-          y2={padding + ratio * (height - padding * 2)}
-          className="grid-line"
-        />
-      ))}
-      <line x1={padding} y1={zeroY} x2={width - padding} y2={zeroY} className="zero-line" />
-      <polyline points={points} className="net-line" />
-      {data.map((d, i) => {
-        const x = padding + i * step;
-        const y = height - padding - ((d.net - min) / span) * (height - padding * 2);
-        return <circle key={d.month} cx={x} cy={y} r="4" className="net-dot" />;
-      })}
-    </svg>
+    <div className="chart-frame">
+      <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="净结余趋势图">
+        {ticks.map(({ ratio, value }) => {
+          const y = height - padding.bottom - ratio * plotHeight;
+          return (
+            <g key={ratio}>
+              <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} className="grid-line" />
+              <text x={padding.left - 10} y={y + 4} textAnchor="end" className="axis-label">
+                {formatAxisCurrency(value)}
+              </text>
+            </g>
+          );
+        })}
+        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} className="axis-line" />
+        <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} className="axis-line" />
+        <line x1={padding.left} y1={zeroY} x2={width - padding.right} y2={zeroY} className="zero-line" />
+        <polyline points={points} className="net-line" />
+        {data.map((d, i) => {
+          const x = padding.left + i * step;
+          const y = height - padding.bottom - ((d.net - min) / span) * plotHeight;
+          return (
+            <g key={d.month}>
+              <circle
+                cx={x}
+                cy={y}
+                r="4"
+                className="net-dot"
+                onMouseEnter={(event) => showTooltip(event, `${d.month} 净结余：${formatCurrency(d.net)}`)}
+                onMouseMove={(event) => showTooltip(event, `${d.month} 净结余：${formatCurrency(d.net)}`)}
+                onMouseLeave={() => setTooltip(null)}
+              />
+              <text x={x} y={height - 8} textAnchor="middle">
+                {d.month.slice(5)}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      {tooltip && (
+        <div className="chart-tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
+          {tooltip.label}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -428,8 +584,8 @@ function App() {
   const [imports, setImports] = useState([]);
   const [message, setMessage] = useState("");
   const [topN, setTopN] = useState(10);
-  const [selectedTopMonths, setSelectedTopMonths] = useState([]);
-  const [topMonthToAdd, setTopMonthToAdd] = useState("");
+  const [expenseTopFilters, setExpenseTopFilters] = useState(defaultTopFilters);
+  const [incomeTopFilters, setIncomeTopFilters] = useState(defaultTopFilters);
   const [showImportPreview, setShowImportPreview] = useState(false);
   const [autoSaveRules, setAutoSaveRules] = useState(true);
   const [filters, setFilters] = useState({
@@ -440,6 +596,9 @@ function App() {
     cardType: "全部",
     type: "全部",
     category: "全部",
+    minAmount: "",
+    maxAmount: "",
+    keyword: "",
   });
   const restoreRef = useRef(null);
 
@@ -470,53 +629,29 @@ function App() {
     [monthly],
   );
 
-  const topByMonth = useMemo(() => {
-    const map = new Map();
-    filtered
-      .filter((tx) => tx.expense > 0 && !["转账", "退款"].includes(tx.type))
-      .forEach((tx) => {
-        const rows = map.get(tx.month) || [];
-        rows.push(tx);
-        map.set(tx.month, rows);
-      });
-    return [...map.entries()]
-      .sort(([a], [b]) => b.localeCompare(a))
-      .map(([month, rows]) => ({
-        month,
-        rows: rows.sort((a, b) => b.expense - a.expense).slice(0, Math.max(1, Number(topN) || 10)),
-      }));
-  }, [filtered, topN]);
-
-  const displayedTopGroups = useMemo(() => {
-    const selected = new Set(selectedTopMonths);
-    if (!selected.size) return topByMonth.slice(0, 1);
-    return topByMonth.filter((group) => selected.has(group.month));
-  }, [topByMonth, selectedTopMonths]);
-
-  useEffect(() => {
-    const available = new Set(topByMonth.map((group) => group.month));
-    setSelectedTopMonths((prev) => prev.filter((month) => available.has(month)));
-  }, [topByMonth]);
-
-  useEffect(() => {
-    if (!topMonthToAdd && topByMonth[0]?.month) setTopMonthToAdd(topByMonth[0].month);
-    if (topMonthToAdd && !topByMonth.some((group) => group.month === topMonthToAdd)) {
-      setTopMonthToAdd(topByMonth[0]?.month || "");
-    }
-  }, [topByMonth, topMonthToAdd]);
-
-  const comparisonRows = useMemo(() => {
-    const selected = new Set(displayedTopGroups.map((group) => group.month));
-    return monthly.filter((row) => selected.has(row.month)).sort((a, b) => b.month.localeCompare(a.month));
-  }, [monthly, displayedTopGroups]);
-
-  const insightTransactions = useMemo(() => {
-    const months = new Set(displayedTopGroups.map((group) => group.month));
-    return filtered.filter((tx) => months.has(tx.month) && tx.expense > 0 && !["转账", "退款"].includes(tx.type));
-  }, [filtered, displayedTopGroups]);
-
-  const categoryInsight = useMemo(() => aggregateInsight(insightTransactions, "category").slice(0, 8), [insightTransactions]);
-  const sourceInsight = useMemo(() => aggregateInsight(insightTransactions, "source"), [insightTransactions]);
+  const expenseTopRows = useMemo(() => applyTopFilters(filtered, expenseTopFilters, "expense"), [filtered, expenseTopFilters]);
+  const incomeTopRows = useMemo(() => applyTopFilters(filtered, incomeTopFilters, "income"), [filtered, incomeTopFilters]);
+  const expenseTopGroups = useMemo(
+    () => buildTopGroups(expenseTopRows, "expense", topN, expenseTopFilters.sort),
+    [expenseTopRows, topN, expenseTopFilters.sort],
+  );
+  const incomeTopGroups = useMemo(
+    () => buildTopGroups(incomeTopRows, "income", topN, incomeTopFilters.sort),
+    [incomeTopRows, topN, incomeTopFilters.sort],
+  );
+  const expenseComparisonRows = useMemo(() => summarize(expenseTopRows).sort((a, b) => b.month.localeCompare(a.month)), [expenseTopRows]);
+  const incomeComparisonRows = useMemo(() => summarize(incomeTopRows).sort((a, b) => b.month.localeCompare(a.month)), [incomeTopRows]);
+  const expenseCategoryInsight = useMemo(() => aggregateInsight(expenseTopRows, "category", "expense").slice(0, 8), [expenseTopRows]);
+  const expenseSourceInsight = useMemo(() => aggregateInsight(expenseTopRows, "source", "expense"), [expenseTopRows]);
+  const incomeCategoryInsight = useMemo(() => aggregateInsight(incomeTopRows, "category", "income").slice(0, 8), [incomeTopRows]);
+  const incomeSourceInsight = useMemo(() => aggregateInsight(incomeTopRows, "source", "income"), [incomeTopRows]);
+  const detailRows = useMemo(
+    () =>
+      [...filtered]
+        .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+        .slice(0, 300),
+    [filtered],
+  );
 
   const options = useMemo(
     () => ({
@@ -603,7 +738,7 @@ function App() {
   }
 
   function exportTopN() {
-    const rows = displayedTopGroups.flatMap((group) =>
+    const rows = expenseTopGroups.flatMap((group) =>
       group.rows.map((tx, index) => ({
         月份: group.month,
         排名: index + 1,
@@ -618,6 +753,24 @@ function App() {
       })),
     );
     downloadCsv(`每月TOP${topN}消费`, rows);
+  }
+
+  function exportTopIncome() {
+    const rows = incomeTopGroups.flatMap((group) =>
+      group.rows.map((tx, index) => ({
+        月份: group.month,
+        排名: index + 1,
+        日期: tx.date,
+        金额: tx.income,
+        摘要: tx.summary,
+        对方名称: tx.counterparty,
+        来源: tx.source,
+        账户: tx.account,
+        卡片类型: tx.cardType,
+        分类: tx.category,
+      })),
+    );
+    downloadCsv(`每月TOP${topN}收入`, rows);
   }
 
   function backup() {
@@ -635,25 +788,56 @@ function App() {
     setMessage("备份已恢复。");
   }
 
-  function toggleTopMonth(month) {
-    setSelectedTopMonths((prev) =>
-      prev.includes(month) ? prev.filter((item) => item !== month) : [...prev, month].sort((a, b) => b.localeCompare(a)),
-    );
+  function updateTopFilters(kind, patch) {
+    const updater = kind === "income" ? setIncomeTopFilters : setExpenseTopFilters;
+    updater((prev) => ({ ...prev, ...patch }));
   }
 
-  function selectTopPreset(preset) {
-    const months = topByMonth.map((group) => group.month);
-    if (preset === "latest") setSelectedTopMonths([]);
-    if (preset === "last3") setSelectedTopMonths(months.slice(0, 3));
-    if (preset === "last6") setSelectedTopMonths(months.slice(0, 6));
-    if (preset === "all") setSelectedTopMonths(months);
+  function toggleTopMonth(kind, month) {
+    const state = kind === "income" ? incomeTopFilters : expenseTopFilters;
+    const months = state.months.includes(month)
+      ? state.months.filter((item) => item !== month)
+      : [...state.months, month].sort((a, b) => b.localeCompare(a));
+    updateTopFilters(kind, { months });
   }
 
-  function addTopMonth() {
-    if (!topMonthToAdd) return;
-    setSelectedTopMonths((prev) =>
-      prev.includes(topMonthToAdd) ? prev : [...prev, topMonthToAdd].sort((a, b) => b.localeCompare(a)),
-    );
+  function selectTopPreset(kind, preset) {
+    const months = options.months.slice().reverse();
+    if (preset === "latest") updateTopFilters(kind, { months: months.slice(0, 1) });
+    if (preset === "last3") updateTopFilters(kind, { months: months.slice(0, 3) });
+    if (preset === "last6") updateTopFilters(kind, { months: months.slice(0, 6) });
+    if (preset === "all") updateTopFilters(kind, { months });
+  }
+
+  function addTopMonth(kind) {
+    const state = kind === "income" ? incomeTopFilters : expenseTopFilters;
+    if (!state.monthToAdd) return;
+    const months = state.months.includes(state.monthToAdd)
+      ? state.months
+      : [...state.months, state.monthToAdd].sort((a, b) => b.localeCompare(a));
+    updateTopFilters(kind, { months });
+  }
+
+  function setMonthPreset(preset) {
+    const months = options.months;
+    if (preset === "all") setFilters((prev) => ({ ...prev, start: "", end: "" }));
+    if (preset === "latest") {
+      const latest = months[months.length - 1] || "";
+      setFilters((prev) => ({ ...prev, start: latest, end: latest }));
+    }
+    if (preset === "last3") {
+      const selected = months.slice(-3);
+      setFilters((prev) => ({ ...prev, start: selected[0] || "", end: selected[selected.length - 1] || "" }));
+    }
+    if (preset === "last6") {
+      const selected = months.slice(-6);
+      setFilters((prev) => ({ ...prev, start: selected[0] || "", end: selected[selected.length - 1] || "" }));
+    }
+    if (preset === "year") {
+      const year = new Date().getFullYear().toString();
+      const selected = months.filter((month) => month.startsWith(year));
+      setFilters((prev) => ({ ...prev, start: selected[0] || `${year}-01`, end: selected[selected.length - 1] || `${year}-12` }));
+    }
   }
 
   return (
@@ -756,20 +940,49 @@ function App() {
           <Filter size={20} />
           <h2>筛选</h2>
         </div>
+        <div className="preset-actions filter-presets">
+          <button onClick={() => setMonthPreset("all")}>全部</button>
+          <button onClick={() => setMonthPreset("year")}>今年</button>
+          <button onClick={() => setMonthPreset("latest")}>最新月份</button>
+          <button onClick={() => setMonthPreset("last3")}>近 3 月</button>
+          <button onClick={() => setMonthPreset("last6")}>近 6 月</button>
+        </div>
         <div className="filters">
           <label>
             起始月份
-            <input type="month" value={filters.start} onChange={(e) => setFilters({ ...filters, start: e.target.value })} />
+            <select value={filters.start} onChange={(e) => setFilters({ ...filters, start: e.target.value })}>
+              <option value="">不限</option>
+              {options.months.map((month) => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
           </label>
           <label>
             结束月份
-            <input type="month" value={filters.end} onChange={(e) => setFilters({ ...filters, end: e.target.value })} />
+            <select value={filters.end} onChange={(e) => setFilters({ ...filters, end: e.target.value })}>
+              <option value="">不限</option>
+              {options.months.map((month) => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
           </label>
           <Select label="来源" value={filters.source} options={options.sources} onChange={(source) => setFilters({ ...filters, source })} />
           <Select label="账户" value={filters.account} options={options.accounts} onChange={(account) => setFilters({ ...filters, account })} />
           <Select label="卡片类型" value={filters.cardType} options={options.cardTypes} onChange={(cardType) => setFilters({ ...filters, cardType })} />
           <Select label="交易类型" value={filters.type} options={options.types} onChange={(type) => setFilters({ ...filters, type })} />
           <Select label="分类" value={filters.category} options={options.categories} onChange={(category) => setFilters({ ...filters, category })} />
+          <label>
+            最小金额
+            <input inputMode="decimal" value={filters.minAmount} onChange={(e) => setFilters({ ...filters, minAmount: e.target.value })} placeholder="不限" />
+          </label>
+          <label>
+            最大金额
+            <input inputMode="decimal" value={filters.maxAmount} onChange={(e) => setFilters({ ...filters, maxAmount: e.target.value })} placeholder="不限" />
+          </label>
+          <label className="wide-filter">
+            关键词
+            <input value={filters.keyword} onChange={(e) => setFilters({ ...filters, keyword: e.target.value })} placeholder="摘要 / 对方 / 账户 / 分类" />
+          </label>
         </div>
       </section>
 
@@ -844,112 +1057,62 @@ function App() {
       </section>
 
       <section className="band top-spend-band">
+        <TopAnalysis
+          title="每月 TOP N 消费"
+          eyebrow="支出明细筛选、月份对比和结构分析"
+          kind="expense"
+          topN={topN}
+          setTopN={setTopN}
+          filters={expenseTopFilters}
+          updateFilters={(patch) => updateTopFilters("expense", patch)}
+          options={options}
+          groups={expenseTopGroups}
+          comparisonRows={expenseComparisonRows}
+          categoryInsight={expenseCategoryInsight}
+          sourceInsight={expenseSourceInsight}
+          autoSaveRules={autoSaveRules}
+          setAutoSaveRules={setAutoSaveRules}
+          onSelectPreset={(preset) => selectTopPreset("expense", preset)}
+          onToggleMonth={(month) => toggleTopMonth("expense", month)}
+          onAddMonth={() => addTopMonth("expense")}
+          onExport={exportTopN}
+          updateCategory={updateCategory}
+        />
+      </section>
+
+      <section className="band top-income-band">
+        <TopAnalysis
+          title="每月 TOP N 收入"
+          eyebrow="收入明细筛选、月份对比和来源分析"
+          kind="income"
+          topN={topN}
+          setTopN={setTopN}
+          filters={incomeTopFilters}
+          updateFilters={(patch) => updateTopFilters("income", patch)}
+          options={options}
+          groups={incomeTopGroups}
+          comparisonRows={incomeComparisonRows}
+          categoryInsight={incomeCategoryInsight}
+          sourceInsight={incomeSourceInsight}
+          autoSaveRules={autoSaveRules}
+          setAutoSaveRules={setAutoSaveRules}
+          onSelectPreset={(preset) => selectTopPreset("income", preset)}
+          onToggleMonth={(month) => toggleTopMonth("income", month)}
+          onAddMonth={() => addTopMonth("income")}
+          onExport={exportTopIncome}
+          updateCategory={updateCategory}
+        />
+      </section>
+
+      <section className="band detail-band">
         <div className="section-title split">
           <div>
-            <p className="eyebrow">自由选择月份并横向对比</p>
-            <h2>每月 TOP N 消费</h2>
+            <p className="eyebrow">响应全局筛选</p>
+            <h2>交易明细</h2>
           </div>
-          <label className="topn">
-            TOP
-            <input min="1" max="100" type="number" value={topN} onChange={(e) => setTopN(e.target.value)} />
-          </label>
-          <label className="rule-toggle">
-            <input type="checkbox" checked={autoSaveRules} onChange={(e) => setAutoSaveRules(e.target.checked)} />
-            分类修改保存为规则
-          </label>
+          <span className="muted-note">显示最近 {detailRows.length} 条</span>
         </div>
-        <div className="month-controls">
-          <div className="month-picker-row">
-            <label>
-              指定月份
-              <select value={topMonthToAdd} onChange={(e) => setTopMonthToAdd(e.target.value)}>
-                {topByMonth.map((group) => (
-                  <option key={group.month} value={group.month}>{group.month}</option>
-                ))}
-              </select>
-            </label>
-            <button className="primary-btn" onClick={addTopMonth}>加入对比</button>
-            <button onClick={() => setSelectedTopMonths([])}>清空选择</button>
-          </div>
-          <div className="preset-actions">
-            <button onClick={() => selectTopPreset("latest")}>最新月份</button>
-            <button onClick={() => selectTopPreset("last3")}>近 3 月</button>
-            <button onClick={() => selectTopPreset("last6")}>近 6 月</button>
-            <button onClick={() => selectTopPreset("all")}>全部月份</button>
-          </div>
-          <div className="month-chip-grid">
-            {topByMonth.map((group) => (
-              <button
-                className={`month-chip ${selectedTopMonths.includes(group.month) ? "active" : ""}`}
-                key={group.month}
-                onClick={() => toggleTopMonth(group.month)}
-              >
-                {group.month}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="comparison-grid">
-          {comparisonRows.map((row) => (
-            <article className="compare-card" key={row.month}>
-              <span>{row.month}</span>
-              <strong>{formatCurrency(row.expense)}</strong>
-              <small>收入 {formatCurrency(row.income)} · 结余 {formatCurrency(row.net)}</small>
-            </article>
-          ))}
-        </div>
-        <section className="insight-grid">
-          <InsightPanel title="分类支出结构" rows={categoryInsight} />
-          <InsightPanel title="来源支出结构" rows={sourceInsight} />
-        </section>
-        <div className="top-list">
-          {displayedTopGroups.map((group) => (
-            <article className="month-card" key={group.month}>
-              <h3>{group.month}</h3>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>排名</th>
-                      <th>日期</th>
-                      <th>金额</th>
-                      <th>摘要</th>
-                      <th>对方名称</th>
-                      <th>来源</th>
-                      <th>账户</th>
-                      <th>分类</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {group.rows.map((tx, index) => (
-                      <tr key={tx.id}>
-                        <td>{index + 1}</td>
-                        <td>{tx.date}</td>
-                        <td className="money">{formatCurrency(tx.expense)}</td>
-                        <td>{tx.summary}</td>
-                        <td>{tx.counterparty}</td>
-                        <td>{tx.source}</td>
-                        <td>{tx.account}</td>
-                        <td>
-                          <select
-                            value={tx.category}
-                            onChange={(event) => updateCategory(tx.id, event.target.value)}
-                            title="修改分类"
-                          >
-                            {CATEGORIES.map((category) => (
-                              <option key={category}>{category}</option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          ))}
-          {!topByMonth.length && <div className="empty">导入账单后会在这里显示每月最大消费。</div>}
-        </div>
+        <TransactionTable rows={detailRows} kind="any" updateCategory={updateCategory} />
       </section>
 
       <section className="band data-band">
@@ -980,6 +1143,178 @@ function Select({ label, value, options, onChange }) {
         ))}
       </select>
     </label>
+  );
+}
+
+function TopAnalysis({
+  title,
+  eyebrow,
+  kind,
+  topN,
+  setTopN,
+  filters,
+  updateFilters,
+  options,
+  groups,
+  comparisonRows,
+  categoryInsight,
+  sourceInsight,
+  autoSaveRules,
+  setAutoSaveRules,
+  onSelectPreset,
+  onToggleMonth,
+  onAddMonth,
+  onExport,
+  updateCategory,
+}) {
+  const isIncome = kind === "income";
+  return (
+    <>
+      <div className="section-title split">
+        <div>
+          <p className="eyebrow">{eyebrow}</p>
+          <h2>{title}</h2>
+        </div>
+        <div className="section-actions">
+          <label className="topn">
+            TOP
+            <input min="1" max="100" type="number" value={topN} onChange={(e) => setTopN(e.target.value)} />
+          </label>
+          <button onClick={onExport}>
+            <Download size={16} />
+            导出
+          </button>
+          <label className="rule-toggle">
+            <input type="checkbox" checked={autoSaveRules} onChange={(e) => setAutoSaveRules(e.target.checked)} />
+            分类规则
+          </label>
+        </div>
+      </div>
+      <div className="month-controls">
+        <div className="month-picker-row">
+          <label>
+            指定月份
+            <select value={filters.monthToAdd} onChange={(e) => updateFilters({ monthToAdd: e.target.value })}>
+              <option value="">选择月份</option>
+              {options.months.slice().reverse().map((month) => (
+                <option key={month} value={month}>{month}</option>
+              ))}
+            </select>
+          </label>
+          <button className="primary-btn" onClick={onAddMonth}>加入对比</button>
+          <button onClick={() => updateFilters({ months: [] })}>清空月份</button>
+        </div>
+        <div className="preset-actions">
+          <button onClick={() => onSelectPreset("latest")}>最新月份</button>
+          <button onClick={() => onSelectPreset("last3")}>近 3 月</button>
+          <button onClick={() => onSelectPreset("last6")}>近 6 月</button>
+          <button onClick={() => onSelectPreset("all")}>全部月份</button>
+        </div>
+        <div className="month-chip-grid">
+          {options.months.slice().reverse().map((month) => (
+            <button
+              className={`month-chip ${filters.months.includes(month) ? "active" : ""}`}
+              key={month}
+              onClick={() => onToggleMonth(month)}
+            >
+              {month}
+            </button>
+          ))}
+        </div>
+        <div className="local-filters">
+          <Select label="来源" value={filters.source} options={options.sources} onChange={(source) => updateFilters({ source })} />
+          <Select label="账户" value={filters.account} options={options.accounts} onChange={(account) => updateFilters({ account })} />
+          <Select label="卡片类型" value={filters.cardType} options={options.cardTypes} onChange={(cardType) => updateFilters({ cardType })} />
+          <Select label="分类" value={filters.category} options={options.categories} onChange={(category) => updateFilters({ category })} />
+          <label>
+            最小金额
+            <input inputMode="decimal" value={filters.minAmount} onChange={(e) => updateFilters({ minAmount: e.target.value })} placeholder="不限" />
+          </label>
+          <label>
+            最大金额
+            <input inputMode="decimal" value={filters.maxAmount} onChange={(e) => updateFilters({ maxAmount: e.target.value })} placeholder="不限" />
+          </label>
+          <label>
+            排序
+            <select value={filters.sort} onChange={(e) => updateFilters({ sort: e.target.value })}>
+              <option value="amount">金额降序</option>
+              <option value="date">日期降序</option>
+            </select>
+          </label>
+          <label className="wide-filter">
+            关键词
+            <input value={filters.keyword} onChange={(e) => updateFilters({ keyword: e.target.value })} placeholder="摘要 / 对方 / 账户 / 分类" />
+          </label>
+        </div>
+      </div>
+      <div className="comparison-grid">
+        {comparisonRows.map((row) => (
+          <article className="compare-card" key={row.month}>
+            <span>{row.month}</span>
+            <strong>{formatCurrency(isIncome ? row.income : row.expense)}</strong>
+            <small>{isIncome ? `支出 ${formatCurrency(row.expense)}` : `收入 ${formatCurrency(row.income)}`} · 结余 {formatCurrency(row.net)}</small>
+          </article>
+        ))}
+      </div>
+      <section className="insight-grid">
+        <InsightPanel title={isIncome ? "收入分类结构" : "分类支出结构"} rows={categoryInsight} />
+        <InsightPanel title={isIncome ? "收入来源结构" : "来源支出结构"} rows={sourceInsight} />
+      </section>
+      <div className="top-list">
+        {groups.map((group) => (
+          <article className="month-card" key={group.month}>
+            <h3>{group.month}</h3>
+            <TransactionTable rows={group.rows} kind={kind} updateCategory={updateCategory} />
+          </article>
+        ))}
+        {!groups.length && <div className="empty">当前筛选条件下没有可展示的{isIncome ? "收入" : "消费"}。</div>}
+      </div>
+    </>
+  );
+}
+
+function TransactionTable({ rows, kind, updateCategory }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>金额</th>
+            <th>类型</th>
+            <th>摘要</th>
+            <th>对方名称</th>
+            <th>来源</th>
+            <th>账户</th>
+            <th>分类</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((tx) => {
+            const amount = kind === "income" ? tx.income : kind === "expense" ? tx.expense : transactionAmount(tx, "any");
+            const isIncome = kind === "income" || (kind === "any" && tx.income > tx.expense);
+            return (
+              <tr key={tx.id}>
+                <td>{tx.date}</td>
+                <td className={isIncome ? "positive" : "money"}>{formatCurrency(amount)}</td>
+                <td>{tx.type}</td>
+                <td>{tx.summary}</td>
+                <td>{tx.counterparty}</td>
+                <td>{tx.source}</td>
+                <td>{tx.account}</td>
+                <td>
+                  <select value={tx.category} onChange={(event) => updateCategory(tx.id, event.target.value)} title="修改分类">
+                    {CATEGORIES.map((category) => (
+                      <option key={category}>{category}</option>
+                    ))}
+                  </select>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
