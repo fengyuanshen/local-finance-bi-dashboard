@@ -1,0 +1,440 @@
+:root {
+  color: #18202a;
+  background: #f6f4ef;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  align-items: center;
+  border: 1px solid #cdd5d9;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #18202a;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
+button:hover {
+  border-color: #78929d;
+}
+
+.app {
+  margin: 0 auto;
+  max-width: 1360px;
+  padding: 28px;
+}
+
+.topbar {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(28px, 4vw, 44px);
+  line-height: 1.1;
+}
+
+h2 {
+  font-size: 20px;
+}
+
+h3 {
+  font-size: 18px;
+}
+
+.eyebrow {
+  color: #69757c;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.status {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dce1e3;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  white-space: nowrap;
+}
+
+.band,
+.charts article {
+  background: #ffffff;
+  border: 1px solid #dce1e3;
+  border-radius: 8px;
+  margin-bottom: 18px;
+  padding: 18px;
+}
+
+.section-title {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.section-title.split {
+  justify-content: space-between;
+}
+
+.import-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(260px, 420px) 1fr;
+}
+
+.dropzone {
+  align-items: center;
+  border: 1px dashed #8aa0a8;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  gap: 12px;
+  min-height: 96px;
+  padding: 18px;
+}
+
+.dropzone input {
+  display: none;
+}
+
+.import-help {
+  color: #536168;
+  display: grid;
+  gap: 8px;
+  line-height: 1.55;
+}
+
+.message {
+  background: #eef7f2;
+  border: 1px solid #b7d7c4;
+  border-radius: 8px;
+  color: #28563c;
+  margin-top: 14px;
+  padding: 10px 12px;
+}
+
+.preview-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.preview-card {
+  border: 1px solid #e2e6e8;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.preview-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.preview-head span {
+  color: #69757c;
+  display: block;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.primary-btn {
+  background: #154f5f;
+  border-color: #154f5f;
+  color: #ffffff;
+}
+
+.filters {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+}
+
+label {
+  color: #536168;
+  display: grid;
+  font-size: 13px;
+  gap: 6px;
+}
+
+input,
+select {
+  background: #ffffff;
+  border: 1px solid #cdd5d9;
+  border-radius: 8px;
+  color: #18202a;
+  min-height: 38px;
+  min-width: 0;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.metrics {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(5, 1fr);
+  margin-bottom: 18px;
+}
+
+.metric {
+  background: #ffffff;
+  border: 1px solid #dce1e3;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.metric span {
+  color: #69757c;
+  display: block;
+  font-size: 13px;
+}
+
+.metric strong {
+  display: block;
+  font-size: clamp(20px, 2.4vw, 30px);
+  margin-top: 8px;
+}
+
+.metric.income strong {
+  color: #23704a;
+}
+
+.metric.expense strong {
+  color: #a44436;
+}
+
+.charts {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.chart {
+  display: block;
+  height: auto;
+  overflow: visible;
+  width: 100%;
+}
+
+.chart line {
+  stroke: #ccd4d7;
+}
+
+.chart text {
+  fill: #69757c;
+  font-size: 12px;
+}
+
+.bar-income {
+  fill: #2d8a5d;
+}
+
+.bar-expense {
+  fill: #cc6f4f;
+}
+
+.zero-line {
+  stroke-dasharray: 4 4;
+}
+
+.net-line {
+  fill: none;
+  stroke: #235a9b;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.net-dot {
+  fill: #235a9b;
+}
+
+.legend {
+  color: #536168;
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.legend span {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
+.legend i {
+  border-radius: 999px;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.income-dot {
+  background: #2d8a5d;
+}
+
+.expense-dot {
+  background: #cc6f4f;
+}
+
+.topn {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+.rule-toggle {
+  align-items: center;
+  color: #536168;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.rule-toggle input {
+  height: 16px;
+  min-height: 16px;
+  width: 16px;
+}
+
+.topn input {
+  width: 90px;
+}
+
+.top-list {
+  display: grid;
+  gap: 16px;
+}
+
+.month-card {
+  border-top: 1px solid #e2e6e8;
+  padding-top: 14px;
+}
+
+.month-card h3 {
+  margin-bottom: 10px;
+}
+
+.table-wrap {
+  overflow: auto;
+}
+
+table {
+  border-collapse: collapse;
+  min-width: 920px;
+  width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid #e8ecee;
+  font-size: 13px;
+  padding: 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #f7f9f9;
+  color: #536168;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+
+td.money {
+  color: #a44436;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.compact table {
+  min-width: 720px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.danger {
+  border-color: #d4a29b;
+  color: #9b2f22;
+}
+
+.empty {
+  background: #f7f9f9;
+  border: 1px dashed #cdd5d9;
+  border-radius: 8px;
+  color: #69757c;
+  padding: 28px;
+  text-align: center;
+}
+
+@media (max-width: 1080px) {
+  .filters,
+  .metrics,
+  .charts,
+  .import-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .app {
+    padding: 16px;
+  }
+
+  .topbar,
+  .section-title.split,
+  .preview-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .filters,
+  .metrics,
+  .charts,
+  .import-grid {
+    grid-template-columns: 1fr;
+  }
+}
