@@ -263,6 +263,146 @@ function normalizeRows(imported, userRules) {
   return [];
 }
 
+function generateDemoTransactions() {
+  const months = [
+    "2025-07",
+    "2025-08",
+    "2025-09",
+    "2025-10",
+    "2025-11",
+    "2025-12",
+    "2026-01",
+    "2026-02",
+    "2026-03",
+    "2026-04",
+    "2026-05",
+  ];
+  const expenseTemplates = [
+    { summary: "云边咖啡·早餐", counterparty: "云边咖啡", category: "餐饮", source: "信用卡", account: "****1024", cardType: "Demo 白金卡", base: 46 },
+    { summary: "松果餐厅·晚餐", counterparty: "松果餐厅", category: "餐饮", source: "信用卡", account: "****1024", cardType: "Demo 白金卡", base: 238 },
+    { summary: "MetroGo 通勤", counterparty: "MetroGo", category: "交通", source: "借记卡", account: "Demo 工资卡", cardType: "借记卡", base: 32 },
+    { summary: "星河打车", counterparty: "星河出行", category: "交通", source: "信用卡", account: "****2048", cardType: "Demo 旅行卡", base: 92 },
+    { summary: "Nova Mall 生活采购", counterparty: "Nova Mall", category: "购物", source: "信用卡", account: "****1024", cardType: "Demo 白金卡", base: 486 },
+    { summary: "BlueMart 超市", counterparty: "BlueMart", category: "购物", source: "借记卡", account: "Demo 工资卡", cardType: "借记卡", base: 318 },
+    { summary: "Apple iCloud 订阅", counterparty: "Apple Services", category: "订阅", source: "信用卡", account: "****1024", cardType: "Demo 白金卡", base: 68 },
+    { summary: "OpenAI Plus 订阅", counterparty: "OpenAI", category: "订阅", source: "信用卡", account: "****1024", cardType: "Demo 白金卡", base: 145 },
+    { summary: "Arc Cinema 周末电影", counterparty: "Arc Cinema", category: "娱乐", source: "信用卡", account: "****2048", cardType: "Demo 旅行卡", base: 128 },
+    { summary: "健康诊所门诊", counterparty: "晨光健康诊所", category: "医疗", source: "借记卡", account: "Demo 工资卡", cardType: "借记卡", base: 368 },
+    { summary: "城市公寓房租", counterparty: "城市公寓", category: "住房", source: "借记卡", account: "Demo 工资卡", cardType: "借记卡", base: 5200 },
+    { summary: "水电燃气缴费", counterparty: "城市能源", category: "住房", source: "借记卡", account: "Demo 工资卡", cardType: "借记卡", base: 286 },
+    { summary: "知识星球课程", counterparty: "Northstar Academy", category: "教育", source: "信用卡", account: "****1024", cardType: "Demo 白金卡", base: 699 },
+    { summary: "海岸酒店预订", counterparty: "海岸酒店", category: "旅行", source: "信用卡", account: "****2048", cardType: "Demo 旅行卡", base: 1180 },
+    { summary: "数码配件商店", counterparty: "Pixel Lab", category: "数码", source: "信用卡", account: "****1024", cardType: "Demo 白金卡", base: 899 },
+  ];
+  const transactions = [];
+  months.forEach((month, monthIndex) => {
+    const salary = 28500 + (monthIndex % 4) * 1200;
+    transactions.push({
+      id: `demo-${month}-salary`,
+      date: `${month}-05`,
+      month,
+      source: "借记卡",
+      account: "Demo 工资卡",
+      cardType: "借记卡",
+      type: "收入",
+      summary: "Demo 月薪入账",
+      counterparty: "星澜科技有限公司",
+      income: salary,
+      expense: 0,
+      currency: "CNY",
+      category: "其他",
+      raw: { demo: true },
+      importFile: "Demo 演示数据",
+      importedAt: "2026-05-13T00:00:00.000Z",
+      isDemo: true,
+    });
+    if ([2, 5, 8].includes(monthIndex)) {
+      transactions.push({
+        id: `demo-${month}-bonus`,
+        date: `${month}-18`,
+        month,
+        source: "借记卡",
+        account: "Demo 工资卡",
+        cardType: "借记卡",
+        type: "收入",
+        summary: "Demo 项目奖金",
+        counterparty: "星澜科技有限公司",
+        income: 6800 + monthIndex * 300,
+        expense: 0,
+        currency: "CNY",
+        category: "其他",
+        raw: { demo: true },
+        importFile: "Demo 演示数据",
+        importedAt: "2026-05-13T00:00:00.000Z",
+        isDemo: true,
+      });
+    }
+    expenseTemplates.forEach((template, index) => {
+      const day = String(((index * 2 + monthIndex) % 26) + 1).padStart(2, "0");
+      const seasonal = 1 + ((monthIndex % 5) - 2) * 0.045;
+      const amount = Math.round(template.base * seasonal + ((index + 1) * (monthIndex + 3)) % 73);
+      transactions.push({
+        id: `demo-${month}-expense-${index}`,
+        date: `${month}-${day}`,
+        month,
+        source: month === "2026-05" && template.source === "信用卡" ? "信用卡未出账" : template.source,
+        account: template.account,
+        cardType: template.cardType,
+        type: "消费",
+        summary: template.summary,
+        counterparty: template.counterparty,
+        income: 0,
+        expense: amount,
+        currency: "CNY",
+        category: template.category,
+        raw: { demo: true },
+        importFile: "Demo 演示数据",
+        importedAt: "2026-05-13T00:00:00.000Z",
+        isDemo: true,
+      });
+    });
+    transactions.push({
+      id: `demo-${month}-refund`,
+      date: `${month}-23`,
+      month,
+      source: month === "2026-05" ? "信用卡未出账" : "信用卡",
+      account: "****1024",
+      cardType: "Demo 白金卡",
+      type: "退款",
+      summary: "Demo 线上订单退款",
+      counterparty: "Nova Mall",
+      income: 120 + monthIndex * 8,
+      expense: 0,
+      currency: "CNY",
+      category: "购物",
+      raw: { demo: true },
+      importFile: "Demo 演示数据",
+      importedAt: "2026-05-13T00:00:00.000Z",
+      isDemo: true,
+    });
+    transactions.push({
+      id: `demo-${month}-repayment`,
+      date: `${month}-26`,
+      month,
+      source: "借记卡",
+      account: "Demo 工资卡",
+      cardType: "借记卡",
+      type: "转账",
+      summary: "Demo 信用卡自动还款",
+      counterparty: "Demo 信用卡中心",
+      income: 0,
+      expense: 0,
+      currency: "CNY",
+      category: "转账",
+      raw: { demo: true },
+      importFile: "Demo 演示数据",
+      importedAt: "2026-05-13T00:00:00.000Z",
+      isDemo: true,
+    });
+  });
+  return transactions;
+}
+
 async function readImportFile(file) {
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: "array", cellDates: true });
@@ -722,6 +862,44 @@ function App() {
     setMessage("本地数据已清空。");
   }
 
+  function loadDemoData() {
+    const hasRealData = state.transactions.some((tx) => !tx.isDemo);
+    if (hasRealData && !window.confirm("加载演示数据会替换当前本地交易和分类规则。确认继续？")) return;
+    const demoTransactions = generateDemoTransactions();
+    setState({
+      transactions: demoTransactions,
+      rules: [],
+      importHistory: [
+        {
+          fileName: "Demo 演示数据",
+          type: "demo",
+          count: demoTransactions.length,
+          importedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    setImports([]);
+    setShowImportPreview(false);
+    setFilters((prev) => ({ ...prev, start: "", end: "" }));
+    setExpenseTopFilters(defaultTopFilters);
+    setIncomeTopFilters(defaultTopFilters);
+    setMessage(`已加载 ${demoTransactions.length} 条完全虚构的演示交易。`);
+  }
+
+  function clearDemoData() {
+    const demoCount = state.transactions.filter((tx) => tx.isDemo).length;
+    if (!demoCount) {
+      setMessage("当前没有演示数据。");
+      return;
+    }
+    setState((prev) => ({
+      ...prev,
+      transactions: prev.transactions.filter((tx) => !tx.isDemo),
+      importHistory: (prev.importHistory || []).filter((item) => item.type !== "demo"),
+    }));
+    setMessage(`已清空 ${demoCount} 条演示交易。`);
+  }
+
   function exportSummary() {
     downloadCsv(
       "月度收支汇总",
@@ -862,11 +1040,21 @@ function App() {
               <h2>导入中心</h2>
             </div>
           </div>
-          {imports.length > 0 && (
-            <button className="ghost-btn" onClick={() => setShowImportPreview((value) => !value)}>
-              {showImportPreview ? "收起预览" : `查看待导入 ${imports.length}`}
+          <div className="section-actions">
+            <button className="ghost-btn" onClick={loadDemoData}>
+              <Database size={16} />
+              加载演示数据
             </button>
-          )}
+            <button className="ghost-btn" onClick={clearDemoData}>
+              <Trash2 size={16} />
+              清空演示数据
+            </button>
+            {imports.length > 0 && (
+              <button className="ghost-btn" onClick={() => setShowImportPreview((value) => !value)}>
+                {showImportPreview ? "收起预览" : `查看待导入 ${imports.length}`}
+              </button>
+            )}
+          </div>
         </div>
         <div className="import-grid">
           <label className="dropzone">
@@ -1123,6 +1311,9 @@ function App() {
         <div className="actions">
           <button onClick={exportSummary}><Download size={16} />导出月度汇总</button>
           <button onClick={exportTopN}><Download size={16} />导出 TOP N</button>
+          <button onClick={exportTopIncome}><Download size={16} />导出 TOP N 收入</button>
+          <button onClick={loadDemoData}><Database size={16} />加载演示数据</button>
+          <button onClick={clearDemoData}><Trash2 size={16} />清空演示数据</button>
           <button onClick={backup}><Save size={16} />备份 JSON</button>
           <button onClick={() => restoreRef.current?.click()}><RotateCcw size={16} />恢复备份</button>
           <button className="danger" onClick={clearData}><Trash2 size={16} />清空本地数据</button>
