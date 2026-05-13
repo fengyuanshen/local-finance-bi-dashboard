@@ -70,6 +70,7 @@ const DEBIT_HEADERS = ["交易日期", "交易类型", "存入金额", "取出�
 const initialState = {
   transactions: [],
   rules: [],
+  importHistory: [],
 };
 
 function openDb() {
@@ -313,6 +314,20 @@ function summarize(transactions) {
   return [...map.values()].sort((a, b) => a.month.localeCompare(b.month));
 }
 
+function aggregateInsight(transactions, key) {
+  const total = transactions.reduce((sum, tx) => sum + (tx.expense || 0), 0);
+  const map = new Map();
+  transactions.forEach((tx) => {
+    const name = tx[key] || "未标记";
+    const item = map.get(name) || { name, amount: 0, count: 0, share: 0 };
+    item.amount += tx.expense || 0;
+    item.count += 1;
+    item.share = total ? item.amount / total : 0;
+    map.set(name, item);
+  });
+  return [...map.values()].sort((a, b) => b.amount - a.amount);
+}
+
 function applyFilters(transactions, filters) {
   return transactions.filter((tx) => {
     if (filters.start && tx.month < filters.start) return false;
@@ -338,6 +353,16 @@ function MiniBarChart({ data }) {
   const step = data.length ? (width - padding * 2) / data.length : 1;
   return (
     <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="收入支出柱状图">
+      {[0.25, 0.5, 0.75].map((ratio) => (
+        <line
+          key={ratio}
+          x1={padding}
+          y1={height - padding - ratio * (height - padding * 2)}
+          x2={width - padding}
+          y2={height - padding - ratio * (height - padding * 2)}
+          className="grid-line"
+        />
+      ))}
       <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} />
       {data.map((d, i) => {
         const x = padding + i * step + step * 0.18;
@@ -345,8 +370,8 @@ function MiniBarChart({ data }) {
         const expenseH = (d.expense / max) * (height - padding * 2);
         return (
           <g key={d.month}>
-            <rect x={x} y={height - padding - incomeH} width={Math.max(8, step * 0.22)} height={incomeH} className="bar-income" />
-            <rect x={x + Math.max(12, step * 0.26)} y={height - padding - expenseH} width={Math.max(8, step * 0.22)} height={expenseH} className="bar-expense" />
+            <rect x={x} y={height - padding - incomeH} width={Math.max(8, step * 0.22)} height={incomeH} rx="5" className="bar-income" />
+            <rect x={x + Math.max(12, step * 0.26)} y={height - padding - expenseH} width={Math.max(8, step * 0.22)} height={expenseH} rx="5" className="bar-expense" />
             <text x={padding + i * step + step / 2} y={height - 8} textAnchor="middle">
               {d.month.slice(5)}
             </text>
@@ -376,6 +401,16 @@ function LineChart({ data }) {
   const zeroY = height - padding - ((0 - min) / span) * (height - padding * 2);
   return (
     <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="净结余趋势图">
+      {[0.25, 0.5, 0.75].map((ratio) => (
+        <line
+          key={ratio}
+          x1={padding}
+          y1={padding + ratio * (height - padding * 2)}
+          x2={width - padding}
+          y2={padding + ratio * (height - padding * 2)}
+          className="grid-line"
+        />
+      ))}
       <line x1={padding} y1={zeroY} x2={width - padding} y2={zeroY} className="zero-line" />
       <polyline points={points} className="net-line" />
       {data.map((d, i) => {
@@ -393,6 +428,9 @@ function App() {
   const [imports, setImports] = useState([]);
   const [message, setMessage] = useState("");
   const [topN, setTopN] = useState(10);
+  const [selectedTopMonths, setSelectedTopMonths] = useState([]);
+  const [topMonthToAdd, setTopMonthToAdd] = useState("");
+  const [showImportPreview, setShowImportPreview] = useState(false);
   const [autoSaveRules, setAutoSaveRules] = useState(true);
   const [filters, setFilters] = useState({
     start: "",
@@ -449,6 +487,37 @@ function App() {
       }));
   }, [filtered, topN]);
 
+  const displayedTopGroups = useMemo(() => {
+    const selected = new Set(selectedTopMonths);
+    if (!selected.size) return topByMonth.slice(0, 1);
+    return topByMonth.filter((group) => selected.has(group.month));
+  }, [topByMonth, selectedTopMonths]);
+
+  useEffect(() => {
+    const available = new Set(topByMonth.map((group) => group.month));
+    setSelectedTopMonths((prev) => prev.filter((month) => available.has(month)));
+  }, [topByMonth]);
+
+  useEffect(() => {
+    if (!topMonthToAdd && topByMonth[0]?.month) setTopMonthToAdd(topByMonth[0].month);
+    if (topMonthToAdd && !topByMonth.some((group) => group.month === topMonthToAdd)) {
+      setTopMonthToAdd(topByMonth[0]?.month || "");
+    }
+  }, [topByMonth, topMonthToAdd]);
+
+  const comparisonRows = useMemo(() => {
+    const selected = new Set(displayedTopGroups.map((group) => group.month));
+    return monthly.filter((row) => selected.has(row.month)).sort((a, b) => b.month.localeCompare(a.month));
+  }, [monthly, displayedTopGroups]);
+
+  const insightTransactions = useMemo(() => {
+    const months = new Set(displayedTopGroups.map((group) => group.month));
+    return filtered.filter((tx) => months.has(tx.month) && tx.expense > 0 && !["转账", "退款"].includes(tx.type));
+  }, [filtered, displayedTopGroups]);
+
+  const categoryInsight = useMemo(() => aggregateInsight(insightTransactions, "category").slice(0, 8), [insightTransactions]);
+  const sourceInsight = useMemo(() => aggregateInsight(insightTransactions, "source"), [insightTransactions]);
+
   const options = useMemo(
     () => ({
       sources: unique(state.transactions.map((tx) => tx.source)),
@@ -467,6 +536,7 @@ function App() {
       parsed.push(await readImportFile(file));
     }
     setImports(parsed);
+    setShowImportPreview(true);
     setMessage(`已读取 ${parsed.length} 个文件，请确认预览后导入。`);
   }
 
@@ -479,7 +549,17 @@ function App() {
     setState((prev) => ({
       ...prev,
       transactions: [...prev.transactions, ...normalized],
+      importHistory: [
+        {
+          fileName: item.fileName,
+          type: item.type,
+          count: normalized.length,
+          importedAt: new Date().toISOString(),
+        },
+        ...(prev.importHistory || []),
+      ].slice(0, 12),
     }));
+    setImports((prev) => prev.filter((pending) => pending.fileName !== item.fileName));
     setMessage(`已导入 ${item.fileName}：${normalized.length} 条交易。`);
   }
 
@@ -523,7 +603,7 @@ function App() {
   }
 
   function exportTopN() {
-    const rows = topByMonth.flatMap((group) =>
+    const rows = displayedTopGroups.flatMap((group) =>
       group.rows.map((tx, index) => ({
         月份: group.month,
         排名: index + 1,
@@ -550,8 +630,30 @@ function App() {
     setState({
       transactions: Array.isArray(data.transactions) ? data.transactions : [],
       rules: Array.isArray(data.rules) ? data.rules : [],
+      importHistory: Array.isArray(data.importHistory) ? data.importHistory : [],
     });
     setMessage("备份已恢复。");
+  }
+
+  function toggleTopMonth(month) {
+    setSelectedTopMonths((prev) =>
+      prev.includes(month) ? prev.filter((item) => item !== month) : [...prev, month].sort((a, b) => b.localeCompare(a)),
+    );
+  }
+
+  function selectTopPreset(preset) {
+    const months = topByMonth.map((group) => group.month);
+    if (preset === "latest") setSelectedTopMonths([]);
+    if (preset === "last3") setSelectedTopMonths(months.slice(0, 3));
+    if (preset === "last6") setSelectedTopMonths(months.slice(0, 6));
+    if (preset === "all") setSelectedTopMonths(months);
+  }
+
+  function addTopMonth() {
+    if (!topMonthToAdd) return;
+    setSelectedTopMonths((prev) =>
+      prev.includes(topMonthToAdd) ? prev : [...prev, topMonthToAdd].sort((a, b) => b.localeCompare(a)),
+    );
   }
 
   return (
@@ -568,9 +670,19 @@ function App() {
       </header>
 
       <section className="band import-band">
-        <div className="section-title">
-          <FileSpreadsheet size={20} />
-          <h2>导入中心</h2>
+        <div className="section-title split">
+          <div className="title-row">
+            <FileSpreadsheet size={20} />
+            <div>
+              <p className="eyebrow">Import</p>
+              <h2>导入中心</h2>
+            </div>
+          </div>
+          {imports.length > 0 && (
+            <button className="ghost-btn" onClick={() => setShowImportPreview((value) => !value)}>
+              {showImportPreview ? "收起预览" : `查看待导入 ${imports.length}`}
+            </button>
+          )}
         </div>
         <div className="import-grid">
           <label className="dropzone">
@@ -589,7 +701,15 @@ function App() {
           </div>
         </div>
         {message && <div className="message">{message}</div>}
-        <div className="preview-list">
+        {imports.length > 0 && showImportPreview && <div className="pending-strip">
+          {imports.map((item) => (
+            <button key={item.fileName} className="pending-file" onClick={() => commitImport(item)}>
+              <span>{item.fileName}</span>
+              <strong>{item.type === "credit" ? "信用卡" : item.type === "debit" ? "借记卡" : "未识别"}</strong>
+            </button>
+          ))}
+        </div>}
+        {imports.length > 0 && showImportPreview && <div className="preview-list">
           {imports.map((item) => (
             <article className="preview-card" key={item.fileName}>
               <div className="preview-head">
@@ -618,10 +738,20 @@ function App() {
               </div>
             </article>
           ))}
-        </div>
+        </div>}
+        {(state.importHistory || []).length > 0 && (
+          <div className="import-history">
+            <span>最近导入</span>
+            {(state.importHistory || []).slice(0, 6).map((item) => (
+              <small key={`${item.fileName}-${item.importedAt}`}>
+                {item.fileName} · {item.count} 条
+              </small>
+            ))}
+          </div>
+        )}
       </section>
 
-      <section className="band">
+      <section className="band filter-band">
         <div className="section-title">
           <Filter size={20} />
           <h2>筛选</h2>
@@ -652,7 +782,7 @@ function App() {
       </section>
 
       <section className="charts">
-        <article>
+        <article className="chart-card chart-card-bars">
           <div className="section-title">
             <BarChart3 size={20} />
             <h2>月度收入 / 支出</h2>
@@ -663,7 +793,7 @@ function App() {
             <span><i className="expense-dot" />支出</span>
           </div>
         </article>
-        <article>
+        <article className="chart-card chart-card-line">
           <div className="section-title">
             <SlidersHorizontal size={20} />
             <h2>净结余趋势</h2>
@@ -672,10 +802,51 @@ function App() {
         </article>
       </section>
 
-      <section className="band">
+      <section className="band monthly-matrix-band">
         <div className="section-title split">
           <div>
-            <p className="eyebrow">按单笔支出排序</p>
+            <p className="eyebrow">按月横向审视收支</p>
+            <h2>月度对比矩阵</h2>
+          </div>
+          <button onClick={exportSummary}>
+            <Download size={16} />
+            导出汇总
+          </button>
+        </div>
+        <div className="table-wrap matrix-table">
+          <table>
+            <thead>
+              <tr>
+                <th>月份</th>
+                <th>总收入</th>
+                <th>总支出</th>
+                <th>信用卡支出</th>
+                <th>借记卡支出</th>
+                <th>净结余</th>
+                <th>交易数</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...monthly].reverse().map((row) => (
+                <tr key={row.month}>
+                  <td>{row.month}</td>
+                  <td>{formatCurrency(row.income)}</td>
+                  <td className="money">{formatCurrency(row.expense)}</td>
+                  <td>{formatCurrency(row.creditExpense)}</td>
+                  <td>{formatCurrency(row.debitExpense)}</td>
+                  <td className={row.net >= 0 ? "positive" : "money"}>{formatCurrency(row.net)}</td>
+                  <td>{row.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="band top-spend-band">
+        <div className="section-title split">
+          <div>
+            <p className="eyebrow">自由选择月份并横向对比</p>
             <h2>每月 TOP N 消费</h2>
           </div>
           <label className="topn">
@@ -687,8 +858,52 @@ function App() {
             分类修改保存为规则
           </label>
         </div>
+        <div className="month-controls">
+          <div className="month-picker-row">
+            <label>
+              指定月份
+              <select value={topMonthToAdd} onChange={(e) => setTopMonthToAdd(e.target.value)}>
+                {topByMonth.map((group) => (
+                  <option key={group.month} value={group.month}>{group.month}</option>
+                ))}
+              </select>
+            </label>
+            <button className="primary-btn" onClick={addTopMonth}>加入对比</button>
+            <button onClick={() => setSelectedTopMonths([])}>清空选择</button>
+          </div>
+          <div className="preset-actions">
+            <button onClick={() => selectTopPreset("latest")}>最新月份</button>
+            <button onClick={() => selectTopPreset("last3")}>近 3 月</button>
+            <button onClick={() => selectTopPreset("last6")}>近 6 月</button>
+            <button onClick={() => selectTopPreset("all")}>全部月份</button>
+          </div>
+          <div className="month-chip-grid">
+            {topByMonth.map((group) => (
+              <button
+                className={`month-chip ${selectedTopMonths.includes(group.month) ? "active" : ""}`}
+                key={group.month}
+                onClick={() => toggleTopMonth(group.month)}
+              >
+                {group.month}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="comparison-grid">
+          {comparisonRows.map((row) => (
+            <article className="compare-card" key={row.month}>
+              <span>{row.month}</span>
+              <strong>{formatCurrency(row.expense)}</strong>
+              <small>收入 {formatCurrency(row.income)} · 结余 {formatCurrency(row.net)}</small>
+            </article>
+          ))}
+        </div>
+        <section className="insight-grid">
+          <InsightPanel title="分类支出结构" rows={categoryInsight} />
+          <InsightPanel title="来源支出结构" rows={sourceInsight} />
+        </section>
         <div className="top-list">
-          {topByMonth.map((group) => (
+          {displayedTopGroups.map((group) => (
             <article className="month-card" key={group.month}>
               <h3>{group.month}</h3>
               <div className="table-wrap">
@@ -737,7 +952,7 @@ function App() {
         </div>
       </section>
 
-      <section className="band">
+      <section className="band data-band">
         <div className="section-title">
           <Download size={20} />
           <h2>数据管理</h2>
@@ -765,6 +980,30 @@ function Select({ label, value, options, onChange }) {
         ))}
       </select>
     </label>
+  );
+}
+
+function InsightPanel({ title, rows }) {
+  const max = Math.max(1, ...rows.map((row) => row.amount));
+  return (
+    <article className="insight-panel">
+      <h3>{title}</h3>
+      <div className="insight-list">
+        {rows.map((row) => (
+          <div className="insight-row" key={row.name}>
+            <div className="insight-row-head">
+              <span>{row.name}</span>
+              <strong>{formatCurrency(row.amount)}</strong>
+            </div>
+            <div className="insight-track">
+              <i style={{ width: `${Math.max(4, (row.amount / max) * 100)}%` }} />
+            </div>
+            <small>{row.count} 笔 · {(row.share * 100).toFixed(1)}%</small>
+          </div>
+        ))}
+        {!rows.length && <div className="empty compact-empty">选择月份后显示结构洞察。</div>}
+      </div>
+    </article>
   );
 }
 
